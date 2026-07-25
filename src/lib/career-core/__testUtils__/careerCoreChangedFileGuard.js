@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 
 const DEFAULT_ALLOWED_FILE_PATTERNS = [
+  /^api\/career-core\/controlled-candidates\/preview\.js$/,
   /^docs\/career-core-[^/]+\.md$/,
   /^scripts\/test-career-core-[^/]+\.js$/,
   /^src\/lib\/career-core\/__fixtures__\/[^/]+\.js$/,
