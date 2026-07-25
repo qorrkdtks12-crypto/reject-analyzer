@@ -4,17 +4,26 @@ export const SCHEDULER_V2_PHONE_CONTACT_WRITE_RPC =
   "upsert_current_person_phone_contact";
 export const SCHEDULER_V2_NOTIFICATION_CONSENT_WRITE_RPC =
   "upsert_current_person_notification_consent";
+export const PHONE_VERIFICATION_DRY_RUN_START_RPC =
+  "start_current_person_phone_verification_dry_run";
+export const PHONE_VERIFICATION_DRY_RUN_CONFIRM_RPC =
+  "confirm_current_person_phone_verification_dry_run";
 
 const RAW_DESTINATION_KEYS = new Set([
+  "code",
   "destination",
   "destination_hash",
   "p_phone",
   "p_destination",
+  "raw_code",
   "phone",
   "raw_phone",
+  "secret",
+  "token",
   "value_normalized",
   "raw_destination",
 ]);
+const PHONE_VERIFICATION_DRY_RUN_PARAM = "phone_verification_dry_run";
 const SUPPORTED_FRONTEND_WRITE_CHANNELS = new Set(["sms", "email"]);
 const SUPPORTED_NOTIFICATION_CONSENT_CHANNELS = new Set(["kakao_alimtalk", "sms"]);
 const SUPPORTED_NOTIFICATION_CONSENT_STATUSES = new Set(["granted", "revoked"]);
@@ -41,6 +50,40 @@ function normalizePhoneInput(phoneLikeInput) {
     throw new Error("A valid phone number is required.");
   }
   return normalized;
+}
+
+function requireRpcClient(supabaseClient) {
+  if (!supabaseClient || typeof supabaseClient.rpc !== "function") {
+    throw new Error("Supabase client with rpc() is required.");
+  }
+}
+
+function buildDryRunMetadata(metadata = {}) {
+  return {
+    ...(metadata || {}),
+    ui_surface: "reminder_settings_panel_hidden_dry_run",
+  };
+}
+
+function sanitizeDryRunResult(value) {
+  const sanitized = sanitizeRpcResult(value) || {};
+  return {
+    challengeId: sanitized.challenge_id || null,
+    status: sanitized.status || "",
+    deliveryMode: sanitized.delivery_mode || "",
+    deliveryCreated: sanitized.delivery_created === true,
+    expiresAt: sanitized.expires_at || "",
+    contactVerified: sanitized.contact_verified === true,
+    sendEligibility: sanitized.send_eligibility || "",
+  };
+}
+
+export function isPhoneVerificationDryRunUiEnabled(search) {
+  if (typeof search !== "string") {
+    if (typeof window === "undefined") return false;
+    search = window.location?.search || "";
+  }
+  return new URLSearchParams(search).get(PHONE_VERIFICATION_DRY_RUN_PARAM) === "1";
 }
 
 export function buildSmsContactConsentPayload(phoneLikeInput, options = {}) {
@@ -113,9 +156,7 @@ export function buildEmailContactConsentPayload(emailLikeInput, options = {}) {
 }
 
 export async function saveSchedulerV2ContactConsent(supabaseClient, payload) {
-  if (!supabaseClient || typeof supabaseClient.rpc !== "function") {
-    throw new Error("Supabase client with rpc() is required.");
-  }
+  requireRpcClient(supabaseClient);
   if (!SUPPORTED_FRONTEND_WRITE_CHANNELS.has(payload?.p_channel)) {
     throw new Error("Unsupported contact consent write channel.");
   }
@@ -133,9 +174,7 @@ export async function saveSchedulerV2ContactConsent(supabaseClient, payload) {
 }
 
 export async function upsertCurrentPersonPhoneContact(supabaseClient, phoneLikeInput, options = {}) {
-  if (!supabaseClient || typeof supabaseClient.rpc !== "function") {
-    throw new Error("Supabase client with rpc() is required.");
-  }
+  requireRpcClient(supabaseClient);
 
   const payload = buildPhoneContactPayload(phoneLikeInput, options);
   const { data, error } = await supabaseClient.rpc(
@@ -156,9 +195,7 @@ export async function upsertCurrentPersonNotificationConsent(
   consentStatus,
   options = {}
 ) {
-  if (!supabaseClient || typeof supabaseClient.rpc !== "function") {
-    throw new Error("Supabase client with rpc() is required.");
-  }
+  requireRpcClient(supabaseClient);
 
   const payload = buildNotificationConsentPayload(channel, consentStatus, options);
   const { data, error } = await supabaseClient.rpc(
@@ -171,4 +208,46 @@ export async function upsertCurrentPersonNotificationConsent(
   }
 
   return sanitizeRpcResult(data);
+}
+
+export async function startCurrentPersonPhoneVerificationDryRun(supabaseClient, options = {}) {
+  requireRpcClient(supabaseClient);
+
+  const { data, error } = await supabaseClient.rpc(
+    PHONE_VERIFICATION_DRY_RUN_START_RPC,
+    {
+      p_metadata: buildDryRunMetadata(options.metadata),
+    }
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  return sanitizeDryRunResult(data);
+}
+
+export async function confirmCurrentPersonPhoneVerificationDryRun(
+  supabaseClient,
+  challengeId,
+  options = {}
+) {
+  requireRpcClient(supabaseClient);
+  if (!challengeId) {
+    throw new Error("Dry-run challenge is required.");
+  }
+
+  const { data, error } = await supabaseClient.rpc(
+    PHONE_VERIFICATION_DRY_RUN_CONFIRM_RPC,
+    {
+      p_challenge_id: challengeId,
+      p_metadata: buildDryRunMetadata(options.metadata),
+    }
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  return sanitizeDryRunResult(data);
 }
