@@ -21,6 +21,10 @@ function normalizeDate(value) {
   return String(value || "").slice(0, 10);
 }
 
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function getRawPayload(record) {
   const raw = record?.rawPayload || record?.raw_payload;
   return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
@@ -66,6 +70,29 @@ function buildImprovePayload(action) {
     mode: "improve",
     source: "project-action-drawer",
     record: action?.record,
+  };
+}
+
+function buildProgressPayload(action) {
+  return {
+    date: todayDate() || action?.date,
+    recordId: action?.recordId,
+    mode: "project-progress",
+    source: "project-action-drawer",
+    record: action?.record,
+    projectName: action?.projectName,
+    recordType: "teamProject",
+    actionTitle: action?.title,
+    actionId: action?.id,
+    linkedAction: {
+      recordId: action?.recordId,
+      actionId: action?.id,
+      projectName: action?.projectName,
+      actionTitle: action?.title,
+      startDate: action?.startDate,
+      endDate: action?.endDate,
+      status: action?.status,
+    },
   };
 }
 
@@ -174,6 +201,17 @@ export default function CalendarProjectActionDrawer({
       </div>
 
       <form className="space-y-3 px-4 py-4" onSubmit={handleSave}>
+        {onOpenRecordInput ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3.5 py-3">
+            <p className="text-sm font-semibold text-emerald-950">오늘 이 Action에서 한 일</p>
+            <p className="mt-1 text-xs leading-relaxed text-emerald-800">
+              짧게 남겨도 나중에 이력서·면접 재료로 정리할 수 있어요.
+            </p>
+            <Button type="button" size="sm" className="mt-3 h-8 rounded-full bg-emerald-600 px-3 text-xs text-white hover:bg-emerald-700" onClick={() => onOpenRecordInput(buildProgressPayload(action))}>
+              오늘 한 일 기록하기
+            </Button>
+          </div>
+        ) : null}
         <Field label="프로젝트명">
           <input value={form.projectName} onChange={(event) => updateField("projectName", event.target.value)} className="h-9 w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-800 outline-none focus:border-slate-400" />
         </Field>

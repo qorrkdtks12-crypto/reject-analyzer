@@ -456,7 +456,7 @@ function resolveOpenAiProxyUrl() {
       if (url.pathname.endsWith("/api/openai-proxy")) return url.toString();
       if (url.pathname.startsWith("/api/")) return `${url.origin}/api/openai-proxy`;
       return `${url.origin}${url.pathname.replace(/\/$/, "")}/api/openai-proxy`;
-    } catch (_) { return ""; }
+    } catch { return ""; }
   };
   const explicit = String(import.meta.env.VITE_AI_PROXY_URL || "").trim();
   const resume = String(import.meta.env.VITE_RESUME_GENERATE_URL || "").trim();
@@ -673,6 +673,7 @@ export default function PmRecordInput({
   const isProjectTrack = normalizedTrack === "project";
   const isImproveMode = initialRecordContext?.mode === "improve";
   const isProjectActionMode = initialRecordContext?.mode === "project-action";
+  const isProjectProgressMode = initialRecordContext?.mode === "project-progress";
   const isRecommendationActionMode = isProjectActionMode && initialRecordContext?.source === "calendar-recommendation";
   const googleCalendarCandidate = initialRecordContext?.googleCalendarCandidate || null;
   const isGoogleCalendarCandidateMode = initialRecordContext?.source === "google-calendar-candidate";
@@ -686,7 +687,7 @@ export default function PmRecordInput({
     (isProjectTrack ? EMPTY_RECORD_PRESET.sampleRecords.project : EMPTY_SAMPLE_RECORD);
   const trackPresetOptions = useMemo(
     () => createTagOptions(recordPreset.trackWorkTypePresets?.[normalizedTrack]),
-    [recordPreset],
+    [normalizedTrack, recordPreset],
   );
   const coreWorkOptions = useMemo(
     () => createTagOptions(mapLabels(recordPreset.workTypeExtensions)),
@@ -769,6 +770,24 @@ export default function PmRecordInput({
         googleCalendarCandidate: compactGoogleCalendarCandidate(googleCalendarCandidate),
       }
     : {};
+  const projectProgressPayload = useMemo(
+    () =>
+      isProjectProgressMode
+        ? {
+            source: initialRecordContext?.source || "project-action-drawer",
+            mode: "project-progress",
+            track: "project",
+            recordType: "teamProject",
+            progressType: "daily_progress",
+            projectName: firstNonEmpty(initialRecordContext?.projectName, projectName),
+            sourceRecordId: initialRecordContext?.recordId || null,
+            sourceRecordTitle: firstNonEmpty(initialRecordContext?.actionTitle, initialRecordContext?.record?.title, initialRecordContext?.record?.summary),
+            improvementSource: "project-action-progress",
+            linkedAction: initialRecordContext?.linkedAction || null,
+          }
+        : {},
+    [initialRecordContext, isProjectProgressMode, projectName],
+  );
   const googleCalendarCandidatePayload = isGoogleCalendarCandidateMode
     ? {
         source: "google-calendar-candidate",
@@ -872,6 +891,17 @@ export default function PmRecordInput({
     setShowProjectDetails(true);
   }, [googleCalendarCandidate, initialRecordContext, isProjectActionMode, isProjectTrack, recordDate]);
 
+  useEffect(() => {
+    if (!isProjectProgressMode || !isProjectTrack) return;
+    const record = initialRecordContext?.record || {};
+    const raw = record?.rawPayload || record?.raw_payload || {};
+    setProjectRecordType("teamProject");
+    setProjectName((current) => current || firstNonEmpty(initialRecordContext?.projectName, record.projectName, record.project_name, raw.projectName));
+    setProjectActions((current) => current || firstNonEmpty(initialRecordContext?.actionTitle, record.task, raw.projectActions, record.title));
+    setProjectStartDate((current) => current || firstNonEmpty(initialRecordContext?.date, record.date, record.record_date, raw.startDate, record.startDate, recordDate));
+    setShowProjectDetails(true);
+  }, [initialRecordContext, isProjectProgressMode, isProjectTrack, recordDate]);
+
   const hasProjectInput =
     projectRecordType === "personal"
       ? projectName.trim().length > 0 || projectActions.trim().length > 0
@@ -888,7 +918,7 @@ export default function PmRecordInput({
   useEffect(() => {
     if (typeof onDraftChange !== "function") return;
     const snapshot = isProjectTrack
-      ? { text, track: "project", startDate: projectStartDate || recordDate, endDate: projectEndDate, projectName, projectPeriod, projectGoal, projectContext, projectActions, projectResult, projectInsight, roleTags, collaborationTags, resultTags }
+      ? { text, track: "project", startDate: projectStartDate || recordDate, endDate: projectEndDate, projectName, projectPeriod, projectGoal, projectContext, projectActions, projectResult, projectInsight, roleTags, collaborationTags, resultTags, ...projectProgressPayload }
       : { text, track: "weekly", startDate: recordDate, roleTags, collaborationTags, resultTags };
     onDraftChange({ hasContent: canSubmit, snapshot });
   }, [
@@ -909,6 +939,7 @@ export default function PmRecordInput({
     resultTags,
     isLoading,
     projectRecordType,
+    projectProgressPayload,
     canSubmit,
     isProjectTrack,
     onDraftChange,
@@ -1022,6 +1053,7 @@ export default function PmRecordInput({
         resultTags,
         ...improvementPayload,
         ...projectActionPayload,
+        ...projectProgressPayload,
       });
     } else {
       onSubmit({
@@ -1085,7 +1117,7 @@ export default function PmRecordInput({
       }
       const content = data?.data?.choices?.[0]?.message?.content ?? "";
       let parsed;
-      try { parsed = JSON.parse(content); } catch (_) {
+      try { parsed = JSON.parse(content); } catch {
         setAiExamplesError("AI 예시를 가져오지 못했습니다. 기존 가이드를 참고해 작성해 주세요.");
         return;
       }
@@ -1097,7 +1129,7 @@ export default function PmRecordInput({
         return;
       }
       setAiExamples(examples);
-    } catch (_) {
+    } catch {
       setAiExamplesError("AI 예시를 가져오지 못했습니다. 기존 가이드를 참고해 작성해 주세요.");
     } finally {
       setAiExamplesLoading(false);
