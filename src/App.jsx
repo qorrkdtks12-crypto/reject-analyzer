@@ -7405,8 +7405,11 @@ export default function App() {
             if (__jdText && __resumeMerged) {
               // ✅ PATCH (append-only): JD↔Resume local fit on [Analyze] click
               // - no analyzer touch, only compute + store
+              // Hotfix 6 (2026-05-24): __targetRoleForFit는 fit try와 그 아래 precise build try
+              // 양쪽에서 참조되므로 if 블록 직속에 선언한다. try 블록 안에 두면 두 번째 try의
+              // achievement_evidence_gap 단계에서 "__targetRoleForFit is not defined"가 발생한다.
+              const __targetRoleForFit = String(__stateForAnalyze?.targetRoleInPosting || "").trim();
               try {
-                const __targetRoleForFit = String(__stateForAnalyze?.targetRoleInPosting || "").trim();
                 const __scopedJdForFit = __pmScopeJdByTargetRole(__jdText, __targetRoleForFit);
                 const __fit = buildJdResumeFit({ jdText: __scopedJdForFit, resumeText: __resumeMerged });
                 try { window.__JD_RESUME_FIT__ = __fit; } catch { }
