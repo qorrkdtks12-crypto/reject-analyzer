@@ -5,7 +5,7 @@ import { extractTextFromFile } from "@/lib/extract/extractTextFromFile.js";
 import { extractExperienceCandidates } from "@/lib/workTrace/extractExperienceCandidates.js";
 import ExperienceCandidateReview from "./ExperienceCandidateReview.jsx";
 
-const ACCEPTED_TYPES = ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/png,image/jpeg,image/webp";
+const ACCEPTED_TYPES = ".pdf,.docx,.txt,.csv,.tsv,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/csv,text/tab-separated-values,image/png,image/jpeg,image/webp";
 
 const AI_CONVERSATION_SAMPLE_TEXT = [
   "이번 주에는 CS 문의를 유형별로 분류하고 FAQ 문구를 정리했습니다.",
@@ -55,7 +55,7 @@ const INPUT_SOURCE_OPTIONS = [
   {
     id: "spreadsheet_task_list",
     label: "엑셀 업무 리스트",
-    helperText: "현재는 주요 행과 열을 복사해 붙여넣는 방식이 가장 안정적입니다.",
+    helperText: "CSV/TSV 파일을 첨부하거나 주요 행과 열을 복사해 붙여넣을 수 있어요. 엑셀 파일은 CSV로 저장해 올리면 가장 안정적으로 읽을 수 있어요.",
     placeholder: "예: 엑셀의 업무명, 담당 역할, 상태, 결과 열을 복사해서 붙여넣어주세요.",
     ctaLabel: "업무 리스트에서 경험 만들기",
     inputMethod: "text",
@@ -73,7 +73,7 @@ const INPUT_SOURCE_OPTIONS = [
   {
     id: "erp_csv",
     label: "ERP 내려받은 CSV",
-    helperText: "현재는 주요 행과 열을 복사해 붙여넣는 방식이 가장 안정적입니다.",
+    helperText: "ERP에서 내려받은 CSV/TSV 파일을 첨부하거나 주요 행과 열을 그대로 붙여넣을 수 있어요.",
     placeholder: "예: ERP에서 내려받은 업무명, 처리일, 담당자, 상태, 결과 열을 붙여넣어주세요.",
     ctaLabel: "CSV에서 경험 추출하기",
     inputMethod: "text",
@@ -82,7 +82,7 @@ const INPUT_SOURCE_OPTIONS = [
   {
     id: "project_settlement",
     label: "프로젝트 정산표",
-    helperText: "정산표 파일을 첨부하거나 내가 맡은 검수, 정리, 조율, 개선 내용을 중심으로 붙여넣어 주세요.",
+    helperText: "정산표를 CSV/TSV로 저장해 첨부하거나 내가 맡은 검수, 정리, 조율, 개선 내용을 중심으로 붙여넣어 주세요. 엑셀 파일은 CSV로 저장해 올리면 가장 안정적으로 읽을 수 있어요.",
     placeholder: "예: 프로젝트 정산 항목, 이슈, 조정 내용, 최종 결과를 붙여넣어주세요.",
     ctaLabel: "정산표에서 경험 만들기",
     inputMethod: "text",
@@ -91,7 +91,7 @@ const INPUT_SOURCE_OPTIONS = [
   {
     id: "customer_voc",
     label: "고객 VOC 리스트",
-    helperText: "VOC 파일을 첨부하거나 원문과 함께 분류, 대응, 개선 제안처럼 내가 한 일을 남겨주세요.",
+    helperText: "VOC CSV/TSV 파일을 첨부하거나 원문과 함께 분류, 대응, 개선 제안처럼 내가 한 일을 남겨주세요.",
     placeholder: "예: 고객 VOC 목록과 내가 분류한 기준, 대응 방식, 개선 결과를 붙여넣어주세요.",
     ctaLabel: "VOC에서 경험 정리하기",
     inputMethod: "text",
@@ -100,7 +100,7 @@ const INPUT_SOURCE_OPTIONS = [
   {
     id: "weekly_report",
     label: "주간업무 보고서",
-    helperText: "주간업무 보고서 파일을 첨부하거나 진행 업무, 성과, 이슈, 다음 액션을 그대로 넣어주세요.",
+    helperText: "주간업무 보고서 파일이나 CSV/TSV 표를 첨부할 수 있어요. 진행 업무, 성과, 이슈, 다음 액션을 그대로 넣어주세요.",
     placeholder: "예: 이번 주 진행 업무, 완료 결과, 협업 내용, 다음 주 계획을 붙여넣어주세요.",
     ctaLabel: "주간보고에서 경험 만들기",
     inputMethod: "text",
@@ -174,6 +174,8 @@ const AI_CONVERSATION_INPUT_CONFIG = {
 
 const FILE_EMPHASIS_SOURCE_TYPES = new Set([
   "meeting_document",
+  "spreadsheet_task_list",
+  "erp_csv",
   "project_settlement",
   "customer_voc",
   "weekly_report",
@@ -698,11 +700,11 @@ export default function WorkTraceInput({ className = "", careerRoleLabel = "", j
           ? res.meta.warnings[0]
           : null;
         setFileError(
-          warn || "파일에서 텍스트를 읽지 못했어요. 스캔 파일이거나 이미지 품질이 낮을 수 있습니다."
+          res.message || warn || "아직 이 파일 형식은 직접 읽지 못해요. PDF, DOCX, TXT, CSV, 이미지 파일을 사용하거나 내용을 복사해 붙여넣어 주세요."
         );
       }
     } catch {
-      setFileError("파일 처리 중 오류가 발생했어요.");
+      setFileError("아직 이 파일 형식은 직접 읽지 못해요. PDF, DOCX, TXT, CSV, 이미지 파일을 사용하거나 내용을 복사해 붙여넣어 주세요.");
     } finally {
       setFileExtracting(false);
     }
@@ -895,7 +897,7 @@ export default function WorkTraceInput({ className = "", careerRoleLabel = "", j
 
       {!isAiMode && shouldEmphasizeFileButton && (
         <p className="text-[11px] leading-relaxed text-violet-700">
-          파일을 올리거나 핵심 내용을 그대로 붙여넣어도 됩니다. 정교한 파싱이나 자동 인식이 필요한 자료는 텍스트 보완을 권장합니다.
+          PDF, DOCX, TXT, CSV, TSV, 이미지 파일을 올리거나 핵심 내용을 그대로 붙여넣어도 됩니다. 엑셀 파일은 CSV로 저장해 올리면 가장 안정적으로 읽을 수 있어요.
         </p>
       )}
 

@@ -12,6 +12,7 @@
 
 import * as pdfjs from "pdfjs-dist";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { formatDelimitedText, isDelimitedFile } from "./formatDelimitedText.js";
 import { buildResumeImportQuality } from "../resume/buildResumeImportQuality.js";
 
 function _ext(name) {
@@ -349,6 +350,7 @@ export async function extractTextFromFile(file, kind /* "jd" | "resume" */) {
     txt: "TXT_EXTRACT_FAILED",
     docx: "DOCX_EXTRACT_FAILED",
     pdf: "PDF_EXTRACT_FAILED",
+    csv: "CSV_EXTRACT_FAILED",
     ocr: "OCR_REQUEST_FAILED",
     unknown: "FILE_READ_FAILED",
   };
@@ -359,7 +361,8 @@ export async function extractTextFromFile(file, kind /* "jd" | "resume" */) {
     PDF_EXTRACT_FAILED: "Failed to extract text from PDF",
     DOCX_EXTRACT_FAILED: "Failed to extract text from DOCX",
     TXT_EXTRACT_FAILED: "Failed to extract text from text file",
-    UNSUPPORTED_FILE_TYPE: "Unsupported file type",
+    CSV_EXTRACT_FAILED: "CSV에서 읽을 수 있는 텍스트가 거의 없어요. 파일을 다시 저장하거나 주요 표를 복사해 붙여넣어 주세요.",
+    UNSUPPORTED_FILE_TYPE: "아직 이 파일 형식은 직접 읽지 못해요. PDF, DOCX, TXT, CSV, 이미지 파일을 사용하거나 내용을 복사해 붙여넣어 주세요.",
     FILE_READ_FAILED: "Failed to read file",
   };
   const __attachQuality = (text, ok) => {
@@ -420,7 +423,19 @@ export async function extractTextFromFile(file, kind /* "jd" | "resume" */) {
   try {
     let text = "";
 
-    if (ext === "txt" || mime.startsWith("text/")) {
+    if (isDelimitedFile(ext, mime)) {
+      attemptedType = "csv";
+      failureStage = "local-extract";
+      const raw = await _readAsText(file);
+      const formatted = formatDelimitedText({ rawText: raw, name, ext, mime });
+      failureStage = "normalize";
+      text = _normalizeText(formatted.text);
+      meta.extractBranch = formatted.fileType === "TSV" ? "tsv" : "csv";
+      meta.tableRowCount = formatted.rowCount;
+      meta.tableColumnCount = formatted.columnCount;
+      meta.warnings.push(...(formatted.warnings || []));
+      meta.confidenceHint = text.length > 100 ? "high" : "low";
+    } else if (ext === "txt" || mime.startsWith("text/")) {
       attemptedType = "txt";
       meta.extractBranch = "txt";
       failureStage = "local-extract";
@@ -479,7 +494,7 @@ export async function extractTextFromFile(file, kind /* "jd" | "resume" */) {
     } else {
       meta.extractBranch = "unsupported";
       failureStage = "type-detect";
-      meta.warnings.push("Unsupported file format. Supported: PDF, DOCX, TXT, PNG, JPG, JPEG, WEBP.");
+      meta.warnings.push("아직 이 파일 형식은 직접 읽지 못해요. PDF, DOCX, TXT, CSV, 이미지 파일을 사용하거나 내용을 복사해 붙여넣어 주세요.");
       meta.failureStage = failureStage;
       meta.failureReason = "UNSUPPORTED_FILE_TYPE";
       meta.failureMessage = "Unsupported file format";
@@ -505,7 +520,9 @@ export async function extractTextFromFile(file, kind /* "jd" | "resume" */) {
         errorCode: source === "ocr" ? "OCR_EMPTY_TEXT" : (__errorCodeByType[attemptedType] || "FILE_READ_FAILED"),
       });
       meta.failureMessage = "empty_text_after_normalize";
-      meta.warnings.push("파일에서 텍스트를 추출하지 못했어요. 스캔 PDF이거나 내용이 없는 파일일 수 있어요.");
+      meta.warnings.push(attemptedType === "csv"
+        ? "CSV에서 읽을 수 있는 텍스트가 거의 없어요. 파일을 다시 저장하거나 주요 표를 복사해 붙여넣어 주세요."
+        : "파일에서 텍스트를 추출하지 못했어요. 스캔 PDF이거나 내용이 없는 파일일 수 있어요.");
       const emptyErrorCode =
         source === "ocr"
           ? "OCR_EMPTY_TEXT"

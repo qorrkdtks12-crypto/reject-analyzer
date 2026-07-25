@@ -20,6 +20,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { formatDelimitedText } from "./formatDelimitedText.js";
 import { buildResumeImportQuality } from "../resume/buildResumeImportQuality.js";
 
 // keep in sync with extractTextFromFile.browser.js
@@ -95,12 +96,16 @@ const _MIME_BY_EXT = {
   txt: "text/plain",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   pdf: "application/pdf",
+  csv: "text/csv",
+  tsv: "text/tab-separated-values",
 };
 
 const _ERROR_BY_BRANCH = {
   txt: "TXT_EXTRACT_FAILED",
   docx: "DOCX_EXTRACT_FAILED",
   pdf: "PDF_EXTRACT_FAILED",
+  csv: "CSV_EXTRACT_FAILED",
+  tsv: "CSV_EXTRACT_FAILED",
 };
 
 export async function extractTextFromFile(file, kind) {
@@ -139,7 +144,16 @@ export async function extractTextFromFile(file, kind) {
   try {
     let text = "";
 
-    if (ext === "txt") {
+    if (ext === "csv" || ext === "tsv") {
+      meta.extractBranch = ext;
+      const raw = await fs.readFile(filePath, "utf-8");
+      const r = formatDelimitedText({ rawText: raw, name, ext, mime });
+      text = _normalizeText(r.text);
+      meta.tableRowCount = r.rowCount;
+      meta.tableColumnCount = r.columnCount;
+      meta.warnings.push(...(r.warnings || []));
+      meta.confidenceHint = text.length > 100 ? "high" : "low";
+    } else if (ext === "txt") {
       meta.extractBranch = "txt";
       const r = await _extractTxt(filePath);
       text = r.text;
@@ -159,7 +173,7 @@ export async function extractTextFromFile(file, kind) {
       if (r.pages != null) meta.pages = r.pages;
       meta.confidenceHint = text.length > 800 ? "medium" : "low";
     } else {
-      meta.warnings.push("Unsupported file format. Supported (Node): PDF, DOCX, TXT.");
+      meta.warnings.push("Unsupported file format. Supported (Node): PDF, DOCX, TXT, CSV, TSV.");
       return _fail("UNSUPPORTED_FORMAT", "Unsupported file format", "type-detect");
     }
 
