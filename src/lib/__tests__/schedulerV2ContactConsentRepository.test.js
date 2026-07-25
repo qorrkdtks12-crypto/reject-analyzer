@@ -1,17 +1,27 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   buildEmailContactConsentPayload,
   buildNotificationConsentPayload,
   buildPhoneContactPayload,
   buildSmsContactConsentPayload,
+  confirmCurrentPersonPhoneVerificationDryRun,
+  isPhoneVerificationDryRunUiEnabled,
   saveSchedulerV2ContactConsent,
+  startCurrentPersonPhoneVerificationDryRun,
   upsertCurrentPersonNotificationConsent,
   upsertCurrentPersonPhoneContact,
+  PHONE_VERIFICATION_DRY_RUN_CONFIRM_RPC,
+  PHONE_VERIFICATION_DRY_RUN_START_RPC,
   SCHEDULER_V2_CONTACT_CONSENT_WRITE_RPC,
   SCHEDULER_V2_NOTIFICATION_CONSENT_WRITE_RPC,
   SCHEDULER_V2_PHONE_CONTACT_WRITE_RPC,
 } from "../schedulerV2ContactConsentRepository.js";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 function createSupabaseMock(result) {
   const calls = [];
@@ -227,6 +237,125 @@ async function testNotificationConsentErrorIsThrownWithoutExtraCalls() {
   ]);
 }
 
+async function testPhoneVerificationDryRunStartUsesOnlyDryRunRpc() {
+  const data = {
+    challenge_id: "challenge-1",
+    status: "pending",
+    delivery_mode: "dry_run",
+    delivery_created: false,
+    masked_destination: "raw-mask-should-not-leak",
+    expires_at: "2026-07-25T10:00:00Z",
+    contact_verified: false,
+    send_eligibility: "not_ready",
+    raw_phone: "raw-phone-should-not-leak",
+    code: "code-should-not-leak",
+  };
+  const { client, calls } = createSupabaseMock({ data, error: null });
+
+  const result = await startCurrentPersonPhoneVerificationDryRun(client);
+
+  assert.deepEqual(result, {
+    challengeId: "challenge-1",
+    status: "pending",
+    deliveryMode: "dry_run",
+    deliveryCreated: false,
+    expiresAt: "2026-07-25T10:00:00Z",
+    contactVerified: false,
+    sendEligibility: "not_ready",
+  });
+  assert.deepEqual(calls, [
+    {
+      method: "rpc",
+      functionName: PHONE_VERIFICATION_DRY_RUN_START_RPC,
+      payload: {
+        p_metadata: {
+          ui_surface: "reminder_settings_panel_hidden_dry_run",
+        },
+      },
+    },
+  ]);
+  assert.notEqual(calls[0].functionName, SCHEDULER_V2_PHONE_CONTACT_WRITE_RPC);
+  assert.notEqual(calls[0].functionName, SCHEDULER_V2_CONTACT_CONSENT_WRITE_RPC);
+  assert.notEqual(calls[0].functionName, SCHEDULER_V2_NOTIFICATION_CONSENT_WRITE_RPC);
+}
+
+async function testPhoneVerificationDryRunConfirmUsesOnlyDryRunRpc() {
+  const data = {
+    challenge_id: "challenge-1",
+    status: "confirmed",
+    delivery_mode: "dry_run",
+    delivery_created: false,
+    contact_verified: false,
+    send_eligibility: "not_ready",
+    raw_code: "raw-code-should-not-leak",
+    token: "token-should-not-leak",
+  };
+  const { client, calls } = createSupabaseMock({ data, error: null });
+
+  const result = await confirmCurrentPersonPhoneVerificationDryRun(client, "challenge-1", {
+    metadata: { code_entered: true },
+  });
+
+  assert.deepEqual(result, {
+    challengeId: "challenge-1",
+    status: "confirmed",
+    deliveryMode: "dry_run",
+    deliveryCreated: false,
+    expiresAt: "",
+    contactVerified: false,
+    sendEligibility: "not_ready",
+  });
+  assert.deepEqual(calls, [
+    {
+      method: "rpc",
+      functionName: PHONE_VERIFICATION_DRY_RUN_CONFIRM_RPC,
+      payload: {
+        p_challenge_id: "challenge-1",
+        p_metadata: {
+          code_entered: true,
+          ui_surface: "reminder_settings_panel_hidden_dry_run",
+        },
+      },
+    },
+  ]);
+  assert.notEqual(calls[0].functionName, SCHEDULER_V2_PHONE_CONTACT_WRITE_RPC);
+  assert.notEqual(calls[0].functionName, SCHEDULER_V2_CONTACT_CONSENT_WRITE_RPC);
+  assert.notEqual(calls[0].functionName, SCHEDULER_V2_NOTIFICATION_CONSENT_WRITE_RPC);
+}
+
+async function testPhoneVerificationDryRunConfirmRequiresChallenge() {
+  const { client, calls } = createSupabaseMock({ data: null, error: null });
+
+  await assert.rejects(
+    () => confirmCurrentPersonPhoneVerificationDryRun(client, ""),
+    /Dry-run challenge is required/
+  );
+  assert.deepEqual(calls, []);
+}
+
+function testPhoneVerificationDryRunHiddenGate() {
+  assert.equal(isPhoneVerificationDryRunUiEnabled("?phone_verification_dry_run=1"), true);
+  assert.equal(isPhoneVerificationDryRunUiEnabled("?phone_verification_dry_run=0"), false);
+  assert.equal(isPhoneVerificationDryRunUiEnabled("?x=1"), false);
+  assert.equal(isPhoneVerificationDryRunUiEnabled(""), false);
+}
+
+function testPhoneVerificationDryRunPanelIsHiddenAndNonVerifying() {
+  const panelPath = path.join(repoRoot, "src", "components", "reminder", "ReminderSettingsPanel.jsx");
+  const source = fs.readFileSync(panelPath, "utf8");
+  const panelStart = source.indexOf("function PhoneVerificationDryRunPanel");
+  const panelEnd = source.indexOf("function NotificationConsentSplitForm", panelStart);
+  assert.notEqual(panelStart, -1);
+  assert.notEqual(panelEnd, -1);
+
+  const panelSource = source.slice(panelStart, panelEnd);
+  assert.match(source, /isPhoneVerificationDryRunUiEnabled\(\)\s*\?\s*\(/);
+  assert.match(source, /dry-run 확인 완료 · 실제 인증 아님/);
+  assert.match(panelSource, /인증 흐름 테스트/);
+  assert.match(panelSource, /개발용 dry-run입니다\. 실제 문자 발송이나 번호 인증은 이루어지지 않아요\./);
+  assert.doesNotMatch(panelSource, /인증 완료|연락처 확인 완료|알림톡 사용 가능|발송 준비 완료/);
+}
+
 async function testInvalidClientThrows() {
   await assert.rejects(
     () => saveSchedulerV2ContactConsent({}, {}),
@@ -323,6 +452,11 @@ await testNotificationConsentOnlyRpcCallAndSanitizedDataReturn();
 await testSmsFallbackNotificationConsentRevokedPayload();
 await testNotificationConsentRejectsUnsupportedInputsBeforeRpc();
 await testNotificationConsentErrorIsThrownWithoutExtraCalls();
+await testPhoneVerificationDryRunStartUsesOnlyDryRunRpc();
+await testPhoneVerificationDryRunConfirmUsesOnlyDryRunRpc();
+await testPhoneVerificationDryRunConfirmRequiresChallenge();
+testPhoneVerificationDryRunHiddenGate();
+testPhoneVerificationDryRunPanelIsHiddenAndNonVerifying();
 await testInvalidClientThrows();
 testPhoneContactPayloadBuilder();
 testSmsPayloadBuilder();

@@ -14,6 +14,9 @@ import {
 } from "../../lib/schedulerV2NotificationSettingsRepository.js";
 import { getCurrentUserIdentities, getSession, linkKakaoIdentity } from "../../lib/auth.js";
 import {
+  confirmCurrentPersonPhoneVerificationDryRun,
+  isPhoneVerificationDryRunUiEnabled,
+  startCurrentPersonPhoneVerificationDryRun,
   upsertCurrentPersonNotificationConsent,
   upsertCurrentPersonPhoneContact,
 } from "../../lib/schedulerV2ContactConsentRepository.js";
@@ -520,6 +523,78 @@ function PhoneContactSaveForm({
   );
 }
 
+function PhoneVerificationDryRunPanel({
+  loggedIn,
+  challengeId,
+  codeValue,
+  status,
+  message,
+  onCodeChange,
+  onStart,
+  onConfirm,
+}) {
+  const isRunning = status === "starting" || status === "confirming";
+  const canStart = loggedIn && !isRunning;
+  const canConfirm = loggedIn && !isRunning && Boolean(challengeId);
+
+  return (
+    <details className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-2 sm:col-span-2">
+      <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+        인증 흐름 테스트
+      </summary>
+      <div className="mt-2 space-y-2">
+        <div className="text-[11px] leading-relaxed text-slate-500">
+          개발용 dry-run입니다. 실제 문자 발송이나 번호 인증은 이루어지지 않아요.
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <button
+            type="button"
+            onClick={onStart}
+            disabled={!canStart}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+              canStart
+                ? "bg-slate-900 text-white hover:bg-slate-700"
+                : "cursor-not-allowed bg-slate-100 text-slate-400"
+            }`}
+          >
+            {status === "starting" ? "dry-run 시작 중" : "dry-run 시작"}
+          </button>
+          <input
+            type="text"
+            value={codeValue}
+            onChange={(event) => onCodeChange(event.target.value)}
+            disabled={!loggedIn || isRunning}
+            placeholder="인증 코드 입력"
+            autoComplete="one-time-code"
+            className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none placeholder:text-slate-300 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+          />
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!canConfirm}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+              canConfirm
+                ? "bg-slate-900 text-white hover:bg-slate-700"
+                : "cursor-not-allowed bg-slate-100 text-slate-400"
+            }`}
+          >
+            {status === "confirming" ? "dry-run 확인 중" : "dry-run 확인"}
+          </button>
+        </div>
+        {message ? (
+          <div
+            className={`text-[11px] font-medium ${
+              status === "error" ? "text-red-500" : "text-slate-600"
+            }`}
+          >
+            {message}
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 function NotificationConsentSplitForm({
   loggedIn,
   consentDraft,
@@ -650,6 +725,10 @@ function SchedulerV2SummaryPreview({
   const [smsPhone, setSmsPhone] = useState("");
   const [contactSaveStatus, setContactSaveStatus] = useState("idle");
   const [contactSaveMessage, setContactSaveMessage] = useState("");
+  const [phoneDryRunChallengeId, setPhoneDryRunChallengeId] = useState("");
+  const [phoneDryRunCode, setPhoneDryRunCode] = useState("");
+  const [phoneDryRunStatus, setPhoneDryRunStatus] = useState("idle");
+  const [phoneDryRunMessage, setPhoneDryRunMessage] = useState("");
   const [notificationConsentDraft, setNotificationConsentDraft] = useState({
     kakao_alimtalk: false,
     sms: false,
@@ -778,6 +857,56 @@ function SchedulerV2SummaryPreview({
     }
   }
 
+  async function handleStartPhoneVerificationDryRun() {
+    if (!loggedIn || phoneDryRunStatus === "starting" || phoneDryRunStatus === "confirming") return;
+    setPhoneDryRunStatus("starting");
+    setPhoneDryRunMessage("");
+    setPhoneDryRunChallengeId("");
+    try {
+      if (!supabase) throw new Error("Supabase client is not configured.");
+      const result = await startCurrentPersonPhoneVerificationDryRun(supabase);
+      setPhoneDryRunChallengeId(result.challengeId || "");
+      setPhoneDryRunStatus("started");
+      setPhoneDryRunMessage(
+        result.expiresAt ? `dry-run 시작됨 · 만료 ${formatDateTime(result.expiresAt)}` : "dry-run 시작됨"
+      );
+    } catch {
+      setPhoneDryRunStatus("error");
+      setPhoneDryRunMessage("dry-run을 시작하지 못했어요.");
+    }
+  }
+
+  async function handleConfirmPhoneVerificationDryRun() {
+    if (
+      !loggedIn ||
+      !phoneDryRunChallengeId ||
+      phoneDryRunStatus === "starting" ||
+      phoneDryRunStatus === "confirming"
+    ) {
+      return;
+    }
+    setPhoneDryRunStatus("confirming");
+    setPhoneDryRunMessage("");
+    try {
+      if (!supabase) throw new Error("Supabase client is not configured.");
+      const result = await confirmCurrentPersonPhoneVerificationDryRun(
+        supabase,
+        phoneDryRunChallengeId,
+        { metadata: { code_entered: Boolean(phoneDryRunCode) } }
+      );
+      setPhoneDryRunStatus(result.status === "confirmed" ? "confirmed" : "started");
+      setPhoneDryRunMessage(
+        result.status === "confirmed"
+          ? "dry-run 확인 완료 · 실제 인증 아님"
+          : `dry-run 상태 · ${result.status || "unknown"}`
+      );
+      setPhoneDryRunCode("");
+    } catch {
+      setPhoneDryRunStatus("error");
+      setPhoneDryRunMessage("dry-run 확인에 실패했어요.");
+    }
+  }
+
   function handleNotificationConsentChange(channel, checked) {
     setNotificationConsentDraft((current) => ({
       ...current,
@@ -876,6 +1005,18 @@ function SchedulerV2SummaryPreview({
                 onPhoneChange={setSmsPhone}
                 onSave={handleSavePhoneContact}
               />
+              {isPhoneVerificationDryRunUiEnabled() ? (
+                <PhoneVerificationDryRunPanel
+                  loggedIn={loggedIn}
+                  challengeId={phoneDryRunChallengeId}
+                  codeValue={phoneDryRunCode}
+                  status={phoneDryRunStatus}
+                  message={phoneDryRunMessage}
+                  onCodeChange={setPhoneDryRunCode}
+                  onStart={handleStartPhoneVerificationDryRun}
+                  onConfirm={handleConfirmPhoneVerificationDryRun}
+                />
+              ) : null}
               <NotificationConsentSplitForm
                 loggedIn={loggedIn}
                 consentDraft={notificationConsentDraft}
