@@ -91,7 +91,7 @@ function readGithubConnectionCallbackQuery(search) {
   const setupAction = String(params.get("setup_action") || "").trim();
   return {
     hasCandidate: GITHUB_CONNECTION_CALLBACK_QUERY_KEYS.some((key) => params.has(key)),
-    isComplete: Boolean(code && state && installationId),
+    isComplete: Boolean(code && state),
     payload: {
       code,
       state,
@@ -1229,6 +1229,33 @@ export default function HomeDashboard({
       window.location.assign(url.toString());
     } catch (err) {
       setGithubRepoError(err.message || "GitHub 연결을 시작하지 못했습니다.");
+    } finally {
+      setGithubConnectStarting(false);
+    }
+  };
+
+  const handleGithubInstalledAuthorizeStart = async () => {
+    setGithubConnectStarting(true);
+    setGithubRepoError(null);
+    setGithubRepoMessage(null);
+    try {
+      const returnTo =
+        typeof window !== "undefined"
+          ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+          : "/";
+      const data = await postGithubConnectionAction("github_connection_prepare", {
+        return_to: returnTo,
+      });
+      const authorizationUrl = data?.connect?.authorization_url || null;
+      if (!authorizationUrl) {
+        throw new Error(data?.warning?.message || "GitHub 인증 URL을 준비하지 못했습니다.");
+      }
+      window.location.assign(authorizationUrl);
+    } catch (err) {
+      setGithubRepoError(getSafeGithubConnectionMessage(
+        err?.message,
+        "GitHub 연결을 마무리하지 못했습니다. 다시 시도해 주세요."
+      ));
     } finally {
       setGithubConnectStarting(false);
     }
@@ -2566,6 +2593,18 @@ export default function HomeDashboard({
               </Button>
             )}
           </div>
+
+          {!githubConnection?.connected ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2 h-9 rounded-full px-4 text-sm font-semibold text-slate-500 hover:bg-white"
+              disabled={githubConnectStarting}
+              onClick={handleGithubInstalledAuthorizeStart}
+            >
+              이미 설치했다면 연결 마무리
+            </Button>
+          ) : null}
 
           {githubRepoError ? (
             <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-600">

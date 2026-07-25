@@ -441,6 +441,7 @@ assert.deepEqual(prepareRes.body, {
     reason: "github_app_not_configured",
     next_action: "configure_github_app",
     installation_url: null,
+    authorization_url: null,
     state_required: true,
   },
 });
@@ -478,6 +479,7 @@ assert.deepEqual(invalidPrepareRes.body, {
     reason: "github_app_invalid_config",
     next_action: "fix_github_app_config",
     installation_url: null,
+    authorization_url: null,
     state_required: true,
   },
 });
@@ -588,6 +590,7 @@ assert.deepEqual(stateUnavailableRes.body, {
     reason: "github_connection_state_unavailable",
     next_action: "apply_github_connection_state_migration",
     installation_url: null,
+    authorization_url: null,
     state: null,
     state_expires_at: null,
     state_required: true,
@@ -753,7 +756,6 @@ assertNoForbiddenResponseKeys(expiredCallbackRes.body);
 for (const [body, expectedCode] of [
   [{ state: callbackState, installation_id: "123456" }, "github_oauth_code_required"],
   [{ state: callbackState, code: "bad code", installation_id: "123456" }, "github_oauth_code_invalid"],
-  [{ state: callbackState, code: "abcDEF_123456" }, "github_installation_id_required"],
   [{ state: callbackState, code: "abcDEF_123456", installation_id: "12abc" }, "github_installation_id_invalid"],
 ]) {
   const validationOnlyRes = await callHandler(
@@ -783,6 +785,29 @@ for (const [body, expectedCode] of [
   assert.equal(validationOnlyRes.body?.error?.code, expectedCode);
   assertNoForbiddenResponseKeys(validationOnlyRes.body);
 }
+
+const inferredInstallationCallbackRes = await callHandler(
+  handleGithubConnectionCallbackStub,
+  { state: callbackState, code: "abcDEF_123456" },
+  "test-token",
+  {
+    supabase: createGithubCallbackSupabaseMock(),
+    verifyAccessToken: authDeps.verifyAccessToken,
+    validateState: async () => ({ ok: true, return_to: "/settings/integrations" }),
+    verifyInstallation: async () => {
+      throw new Error("installation-specific verification must not run without installation_id");
+    },
+    inferInstallation: async ({ supabase, userId, code }) => {
+      assert.equal(userId, verifiedUserId);
+      assert.equal(code, "abcDEF_123456");
+      return { ok: true, github_login: "octocat", installation_id: "123456", inferred_installation_id: true };
+    },
+  }
+);
+assert.equal(inferredInstallationCallbackRes.statusCode, 200);
+assert.equal(inferredInstallationCallbackRes.body?.callback?.connected, true);
+assert.equal(inferredInstallationCallbackRes.body?.callback?.installation_id_received, false);
+assertNoForbiddenResponseKeys(inferredInstallationCallbackRes.body);
 
 const missingConfigCallbackRes = await callHandler(
   handleGithubConnectionCallbackStub,

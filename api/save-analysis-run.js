@@ -82,6 +82,11 @@ import {
   normalizeGithubInstallationIdForCallback,
 } from "../server/api-helpers/github-connection-state.js";
 import {
+  buildVerifiedGithubConnectionRecord,
+  exchangeGithubOAuthCodeForUserToken,
+  persistVerifiedGithubConnection,
+  readGithubOAuthConfig,
+  readGithubUserInstallations,
   normalizeGithubOAuthCodeForCallback,
   verifyAndPersistGithubInstallationConnection,
 } from "../server/api-helpers/github-installation-verify.js";
@@ -2005,6 +2010,7 @@ const GITHUB_CONNECTION_FORBIDDEN_REQUEST_KEYS = Object.freeze([
   ...GITHUB_TOKEN_FORBIDDEN_KEYS,
   ...GITHUB_RAW_PAYLOAD_FORBIDDEN_KEYS,
 ]);
+const GITHUB_OAUTH_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 
 function getGithubRepositorySnapshotPayload(req) {
   return req.body?.repository || req.body?.payload?.repository || req.body?.payload || req.body || {};
@@ -2012,6 +2018,73 @@ function getGithubRepositorySnapshotPayload(req) {
 
 function getGithubConnectionCallbackPayload(req) {
   return req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : req.body || {};
+}
+
+function readGithubOAuthPublicConfig(env = process.env) {
+  const clientId = typeof env?.GITHUB_CLIENT_ID === "string" ? env.GITHUB_CLIENT_ID.trim() : "";
+  const redirectUri = typeof env?.GITHUB_APP_CALLBACK_URL === "string" ? env.GITHUB_APP_CALLBACK_URL.trim() : "";
+  if (!clientId) return { configured: false };
+  return {
+    configured: true,
+    clientId,
+    redirectUri: redirectUri || null,
+  };
+}
+
+function buildGithubOAuthAuthorizationUrl({ state, env = process.env } = {}) {
+  const rawState = typeof state === "string" ? state.trim() : "";
+  const config = readGithubOAuthPublicConfig(env);
+  if (!config.configured || !rawState) return null;
+  const url = new URL(GITHUB_OAUTH_AUTHORIZE_URL);
+  url.searchParams.set("client_id", config.clientId);
+  url.searchParams.set("state", rawState);
+  if (config.redirectUri) url.searchParams.set("redirect_uri", config.redirectUri);
+  return url.toString();
+}
+
+async function verifyAndPersistGithubInstallationConnectionFromAccessibleInstallations({
+  supabase,
+  userId,
+  code,
+  env = process.env,
+  fetchFn = globalThis.fetch,
+  now = Date.now,
+} = {}) {
+  const config = readGithubOAuthConfig(env);
+  if (!config.configured) return { ok: false, code: "github_oauth_config_missing" };
+
+  const tokenResult = await exchangeGithubOAuthCodeForUserToken({ code, config, fetchFn });
+  if (!tokenResult.ok) return { ok: false, code: tokenResult.code || "github_user_token_exchange_failed" };
+
+  const installationResult = await readGithubUserInstallations({
+    accessToken: tokenResult.accessToken,
+    fetchFn,
+  });
+  if (!installationResult.ok) {
+    return { ok: false, code: installationResult.code || "github_installation_verification_unavailable" };
+  }
+
+  const installations = Array.isArray(installationResult.installations) ? installationResult.installations : [];
+  if (installations.length === 0) return { ok: false, code: "github_installation_not_accessible" };
+  if (installations.length > 1) return { ok: false, code: "github_installation_id_required" };
+
+  let record;
+  try {
+    record = buildVerifiedGithubConnectionRecord({ userId, installation: installations[0], now });
+  } catch {
+    return { ok: false, code: "github_installation_verification_unavailable" };
+  }
+
+  const persistResult = await persistVerifiedGithubConnection({ supabase, record });
+  if (!persistResult.ok) return { ok: false, code: "github_connection_persistence_unavailable" };
+
+  return {
+    ok: true,
+    github_login: record.github_login,
+    installation_id: record.installation_id,
+    persistence: persistResult.action,
+    inferred_installation_id: true,
+  };
 }
 
 function buildGithubConnectionCallbackUnavailableResponse() {
@@ -2231,6 +2304,7 @@ export function buildGithubConnectionPrepareResponse(config = readGithubAppPubli
         reason: "github_connection_state_unavailable",
         next_action: "apply_github_connection_state_migration",
         installation_url: null,
+        authorization_url: null,
         state: null,
         state_expires_at: null,
         state_required: true,
@@ -2252,6 +2326,7 @@ export function buildGithubConnectionPrepareResponse(config = readGithubAppPubli
         reason: "github_connection_state_created",
         next_action: "open_github_installation_url",
         installation_url: config.installation_url || null,
+        authorization_url: buildGithubOAuthAuthorizationUrl({ state: stateResult.state }),
         state: stateResult.state || null,
         state_expires_at: stateResult.expires_at || null,
         state_required: true,
@@ -2282,6 +2357,7 @@ export function buildGithubConnectionPrepareResponse(config = readGithubAppPubli
       reason,
       next_action: nextAction,
       installation_url: configured ? config.installation_url || null : null,
+      authorization_url: null,
       state_required: true,
     },
   };
@@ -2403,21 +2479,26 @@ export async function handleGithubConnectionCallbackStub(req, res, deps = {}) {
   }
 
   const rawInstallationId = payload?.installation_id;
-  if (typeof rawInstallationId !== "string" || rawInstallationId.trim() === "") {
-    return jsonError(res, 400, "github_installation_id_required", "GitHub installation id is required.");
-  }
-  const installationId = normalizeGithubInstallationIdForCallback(rawInstallationId);
-  if (!installationId) {
+  const hasInstallationId = typeof rawInstallationId === "string" && rawInstallationId.trim() !== "";
+  const installationId = hasInstallationId ? normalizeGithubInstallationIdForCallback(rawInstallationId) : null;
+  if (hasInstallationId && !installationId) {
     return jsonError(res, 400, "github_installation_id_invalid", "GitHub installation id is invalid.");
   }
 
   const verifyInstallation = deps.verifyInstallation || verifyAndPersistGithubInstallationConnection;
-  const verification = await verifyInstallation({
-    supabase: identity.supabase,
-    userId: identity.userId,
-    code,
-    installationId,
-  });
+  const inferInstallation = deps.inferInstallation || verifyAndPersistGithubInstallationConnectionFromAccessibleInstallations;
+  const verification = installationId
+    ? await verifyInstallation({
+      supabase: identity.supabase,
+      userId: identity.userId,
+      code,
+      installationId,
+    })
+    : await inferInstallation({
+      supabase: identity.supabase,
+      userId: identity.userId,
+      code,
+    });
 
   if (!verification.ok) {
     if (verification.code === "github_oauth_config_missing") {
@@ -2426,7 +2507,7 @@ export async function handleGithubConnectionCallbackStub(req, res, deps = {}) {
         message: "GitHub OAuth configuration is missing.",
         nextAction: "configure_github_oauth_credentials",
         returnTo: validation.return_to,
-        installationIdReceived: true,
+        installationIdReceived: Boolean(installationId),
       }));
     }
     if (verification.code === "github_installation_verification_unavailable") {
@@ -2435,7 +2516,7 @@ export async function handleGithubConnectionCallbackStub(req, res, deps = {}) {
         message: "GitHub installation verification is unavailable.",
         nextAction: "retry_github_installation_verification",
         returnTo: validation.return_to,
-        installationIdReceived: true,
+        installationIdReceived: Boolean(installationId),
       }));
     }
     if (verification.code === "github_connection_persistence_unavailable") {
@@ -2444,7 +2525,16 @@ export async function handleGithubConnectionCallbackStub(req, res, deps = {}) {
         message: "GitHub connection metadata could not be saved.",
         nextAction: "retry_github_connection_persistence",
         returnTo: validation.return_to,
-        installationIdReceived: true,
+        installationIdReceived: Boolean(installationId),
+      }));
+    }
+    if (verification.code === "github_installation_id_required") {
+      return res.status(200).json(buildGithubConnectionVerificationWarningResponse({
+        code: "github_installation_id_required",
+        message: "More than one GitHub App installation is available.",
+        nextAction: "retry_github_connection_with_installation_id",
+        returnTo: validation.return_to,
+        installationIdReceived: false,
       }));
     }
     if (verification.code === "github_installation_not_accessible") {
@@ -2456,7 +2546,7 @@ export async function handleGithubConnectionCallbackStub(req, res, deps = {}) {
   return res.status(200).json(buildGithubConnectionVerifiedResponse({
     returnTo: validation.return_to,
     githubLogin: verification.github_login,
-    installationIdReceived: true,
+    installationIdReceived: Boolean(installationId),
   }));
 }
 
