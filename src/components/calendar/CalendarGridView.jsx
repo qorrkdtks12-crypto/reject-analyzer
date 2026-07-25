@@ -5,9 +5,6 @@ const GENERIC_WORK_TYPES = new Set(["이번 주 기록", "개인 업무", "팀 �
 
 export default function CalendarGridView({
   weeks = [],
-  records = [],
-  demoRangeRecords = [],
-  useDemoRecords = false,
   entriesByDate = {},
   selectedDate = "",
   today = "",
@@ -19,15 +16,12 @@ export default function CalendarGridView({
   monthEmptyNoticeText = "",
   monthSummary = null,
   calendarSummary = null,
-  getWeekRangeSegments,
   deriveExperienceSignalsFromRecords,
   recordsHaveExperienceSignal,
   getCalendarWorkTypeLabel,
   normalizeExperienceSignalLabel,
   onSelectDate,
 }) {
-  const allRecords = [...(useDemoRecords ? demoRangeRecords : []), ...records];
-
   return (
     <>
       <div className="grid grid-cols-7 gap-0.5 sm:gap-2">
@@ -40,17 +34,12 @@ export default function CalendarGridView({
 
       <div className="space-y-2">
         {weeks.map((week, weekIndex) => {
-          const rangeSegments = typeof getWeekRangeSegments === "function" ? getWeekRangeSegments(allRecords, week) : [];
-          const visibleRangeSegments = [];
           return (
             <div key={`week_${weekIndex}`} className="relative">
               <div className="grid grid-cols-7 gap-0.5 sm:gap-2">
                 {week.map((item) => {
                   const entry = entriesByDate[item.date];
-                  const rangeRecords = rangeSegments
-                    .filter((segment) => segment.record?.startDate <= item.date && segment.record?.endDate >= item.date)
-                    .map((segment) => segment.record);
-                  const dayRecordsForSignals = [...(entry?.records || []), ...rangeRecords];
+                  const dayRecordsForSignals = entry?.records || [];
                   const isActive = item.date === selectedDate;
                   const recordCount = entry?.records?.length || 0;
                   const dateRecordStatus = getDateRecordStatus(dayRecordsForSignals, cardsByRecordId);
@@ -78,10 +67,10 @@ export default function CalendarGridView({
                     : dateRecordStatus === "keyword"
                       ? "키워드 기록"
                       : "기록 전";
+                  const maxCellChips = 2;
                   const experienceSignals = typeof deriveExperienceSignalsFromRecords === "function"
-                    ? deriveExperienceSignalsFromRecords(dayRecordsForSignals, 3)
+                    ? deriveExperienceSignalsFromRecords(dayRecordsForSignals, maxCellChips)
                     : [];
-                  const maxCellChips = 3;
                   const visibleExperienceSignals = experienceSignals.slice(0, maxCellChips);
                   const matchesSelectedSignal = typeof recordsHaveExperienceSignal === "function"
                     ? recordsHaveExperienceSignal(dayRecordsForSignals, selectedExperienceSignalKey)
@@ -116,11 +105,13 @@ export default function CalendarGridView({
                     <button
                       key={item.date}
                       type="button"
+                      data-grid-day-card={item.date}
                       aria-label={calendarDayAriaLabel}
                       title={calendarDayAriaLabel}
                       onClick={() => onSelectDate?.(item.date)}
+                      style={{ contain: "paint" }}
                       className={[
-                        "relative aspect-square min-h-[76px] min-w-0 cursor-pointer overflow-hidden rounded-2xl border px-2 pt-2 pb-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 sm:min-h-[108px] sm:px-3 sm:pt-3 sm:pb-5",
+                        "relative isolate aspect-square min-h-[76px] min-w-0 cursor-pointer overflow-hidden rounded-2xl border px-2 pt-2 pb-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 sm:min-h-[108px] sm:px-3 sm:pt-3 sm:pb-5",
                         isActive
                           ? "border-violet-500 ring-2 ring-violet-500/70"
                           : "",
@@ -165,24 +156,33 @@ export default function CalendarGridView({
                         </p>
                       ) : null}
 
-                      <div className="mt-2 flex min-w-0 flex-nowrap gap-1 overflow-hidden">
+                      <div className="mt-2 grid min-w-0 max-w-full gap-1 overflow-hidden">
                         {visibleExperienceSignals.map((signal) => (
-                          <span key={`${item.date}_${signal}`} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] text-violet-700">
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-violet-400" />
-                            <span className="truncate">{signal}</span>
+                          <span
+                            key={`${item.date}_${signal}`}
+                            data-grid-record-chip
+                            className="block w-full max-w-full min-w-0 truncate rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] text-violet-700"
+                          >
+                            {signal}
                           </span>
                         ))}
                         {visibleWorkTypes.map((type) => {
                           const displayType = normalizeExperienceSignalLabel?.(getCalendarWorkTypeLabel?.(type)) || type;
                           return (
-                            <span key={`${item.date}_${type}`} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300" />
-                              <span className="truncate">{displayType}</span>
+                            <span
+                              key={`${item.date}_${type}`}
+                              data-grid-record-chip
+                              className="block w-full max-w-full min-w-0 truncate rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600"
+                            >
+                              {displayType}
                             </span>
                           );
                         })}
                         {extraChipCount > 0 ? (
-                          <span className="inline-flex max-w-full items-center truncate rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                          <span
+                            data-grid-record-chip
+                            className="block w-full max-w-full min-w-0 truncate rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500"
+                          >
                             +{extraChipCount}
                           </span>
                         ) : null}
@@ -191,33 +191,6 @@ export default function CalendarGridView({
                   );
                 })}
               </div>
-              {visibleRangeSegments.length > 0 ? (
-                <div className="pointer-events-none absolute inset-x-0 bottom-2 z-10 grid grid-cols-7 gap-0.5 sm:gap-2">
-                  {visibleRangeSegments.map((segment, segIndex) => {
-                    const isPersonal = segment.record.recordType === "personal" || segment.record.workType === "개인 업무";
-                    const colorClass = isPersonal
-                      ? "bg-slate-100 border-slate-200 text-slate-600"
-                      : "bg-slate-100 border-slate-200 text-slate-700";
-                    const roundClass =
-                      segment.isSegmentStart && segment.isSegmentEnd ? "rounded-full" :
-                      segment.isSegmentStart ? "rounded-l-full rounded-r-sm" :
-                      segment.isSegmentEnd ? "rounded-l-sm rounded-r-full" :
-                      "rounded-sm";
-                    return (
-                      <div
-                        key={`seg_${weekIndex}_${segIndex}`}
-                        className={`h-4 min-w-0 overflow-hidden truncate border px-2 text-[10px] font-medium leading-4 ${colorClass} ${roundClass}`}
-                        style={{
-                          gridColumn: `${segment.startColumn} / ${segment.endColumn}`,
-                          gridRow: segment.lane + 1,
-                        }}
-                      >
-                        {segment.isSegmentStart ? String(segment.record.title || segment.record.summary || "").trim() : ""}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
             </div>
           );
         })}
