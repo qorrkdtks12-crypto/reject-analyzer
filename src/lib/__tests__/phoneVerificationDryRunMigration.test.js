@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const migrationFileName = "20260617183000_phone_verification_dry_run_rpcs.sql";
+const migrationFileName = "20260725015219_phone_verification_dry_run_rpcs.sql";
 const migrationPath = path.join(repoRoot, "supabase", "migrations", migrationFileName);
 
 function loadMigrationSql() {
